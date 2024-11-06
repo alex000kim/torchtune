@@ -447,3 +447,82 @@ class CometLogger(MetricLoggerInterface):
 
     def __del__(self) -> None:
         self.close()
+
+
+class MLFlowLogger(MetricLoggerInterface):
+    """Logger for use w/ MLFlow (https://mlflow.org/).
+    MLFlow is an open-source platform for managing the end-to-end machine learning lifecycle.
+
+    For more information about arguments expected by MLFlow, see
+    https://www.mlflow.org/docs/latest/python_api/mlflow.html#mlflow.start_run.
+
+    Args:
+        tracking_uri (Optional[str]): The tracking URI for the MLFlow server. If not provided, uses the default URI.
+        experiment_name (Optional[str]): The name of the experiment. If not provided, uses the default experiment.
+        run_name (Optional[str]): The name of the run. If not provided, MLFlow will auto-generate a name.
+        tags (Optional[Dict[str, str]]): Tags to associate with the run.
+        **kwargs (Dict[str, Any]): additional arguments to pass to ``mlflow.start_run``.
+
+    Example:
+        >>> from torchtune.training.metric_logging import MLFlowLogger
+        >>> logger = MLFlowLogger(experiment_name="my_experiment", run_name="my_run")
+        >>> logger.log("my_metric", 1.0, 1)
+        >>> logger.log_dict({"my_metric": 1.0}, 1)
+        >>> logger.close()
+
+    Raises:
+        ImportError: If ``mlflow`` package is not installed.
+
+    Note:
+        This logger requires the mlflow package to be installed.
+        You can install it with ``pip install mlflow``.
+        You need to set up your MLFlow tracking URI before using this logger.
+        You can do this by setting the `MLFLOW_TRACKING_URI` environment variable.
+    """
+
+    def __init__(
+        self,
+        tracking_uri: Optional[str] = None,
+        experiment_name: Optional[str] = None,
+        run_name: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+        **kwargs: Dict[str, Any],
+    ):
+        try:
+            import mlflow
+        except ImportError as e:
+            raise ImportError(
+                "``mlflow`` package not found. Please install mlflow using `pip install mlflow` to use MLFlowLogger."
+                "Alternatively, use the ``StdoutLogger``, which can be specified by setting metric_logger_type='stdout'."
+            ) from e
+
+        self._mlflow = mlflow
+
+        if tracking_uri:
+            self._mlflow.set_tracking_uri(tracking_uri)
+
+        if experiment_name:
+            self._mlflow.set_experiment(experiment_name)
+
+        self.run = self._mlflow.start_run(run_name=run_name, tags=tags, **kwargs)
+
+    def log(self, name: str, data: Scalar, step: int) -> None:
+        if self.run:
+            self._mlflow.log_metric(name, data, step=step)
+
+    def log_dict(self, payload: Mapping[str, Scalar], step: int) -> None:
+        if self.run:
+            for name, data in payload.items():
+                self._mlflow.log_metric(name, data, step=step)
+
+    def log_config(self, config: DictConfig) -> None:
+        if self.run:
+            resolved = OmegaConf.to_container(config, resolve=True)
+            self._mlflow.log_params(resolved)
+
+    def close(self) -> None:
+        if self.run:
+            self._mlflow.end_run()
+
+    def __del__(self) -> None:
+        self.close()
